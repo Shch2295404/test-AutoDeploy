@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch: # ручной запуск в Actions → Run workflow (ветка main)
 
 permissions:
   contents: read
@@ -53,12 +54,11 @@ jobs:
           lower=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
           echo "image=${{ env.REGISTRY }}/${lower}:latest" >> "$GITHUB_OUTPUT"
 
-  # Опционально (⭐): в Settings → Secrets → Actions задайте HOST, USERNAME, SSH_KEY, PORT;
-  # в Settings → Variables → Actions создайте ENABLE_SSH_DEPLOY=true, иначе job пропускается (сборка в GHCR всё равно выполняется).
+  # Секреты: HOST, USERNAME, SSH_KEY; опционально PORT. Без них job завершится ошибкой.
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && vars.ENABLE_SSH_DEPLOY == 'true'
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Deploy to VPS over SSH
         uses: appleboy/ssh-action@v1.2.0

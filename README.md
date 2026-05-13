@@ -1,17 +1,20 @@
 # Lesson VPe04 — Time Server API (CI/CD)
 
-Учебный проект по модулю **«Серверное развертывание»**: простой бэкенд на **FastAPI**, сборка **Docker**-образа и публикация в **GitHub Container Registry (GHCR)** через **GitHub Actions**; опционально — деплой на VPS по **SSH** (как в кейсе урока).
+Учебный проект по модулю **«Серверное развертывание»**: **FastAPI**, сборка **Docker**-образа, публикация в **GitHub Container Registry (GHCR)** и **автодеплой на VPS по SSH** через **GitHub Actions** при каждом push в ветку **`main`**.
+
+Репозиторий: [Shch2295404/test-AutoDeploy](https://github.com/Shch2295404/test-AutoDeploy).
 
 ## Возможности
 
-- REST API с текущим временем и датой в **UTC**
-- Swagger UI по адресу `/docs`
-- Автоматическая сборка и пуш образа при **push в ветку `main`**
+- REST API: время и дата в **UTC** (`/time`, `/date`, `/datetime`)
+- Перевод момента из **UTC** в локальное время по **IANA**-часовому поясу (`/convert`)
+- **Swagger UI**: `/docs`
+- **CI/CD**: при push в **`main`** — сборка образа → push в GHCR → по SSH обновление контейнера на сервере
 
 ## Требования
 
-- Python 3.12+ (локально достаточно совместимой версии с зависимостями)
-- [Docker](https://docs.docker.com/get-docker/) — для локального запуска в контейнере
+- Python 3.12+ (локально)
+- [Docker](https://docs.docker.com/get-docker/) — для запуска в контейнере
 
 ## Быстрый старт (локально)
 
@@ -24,7 +27,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Откройте в браузере: `http://127.0.0.1:8000/docs`
+Откройте: `http://127.0.0.1:8000/docs`
 
 ## Docker (локально)
 
@@ -33,136 +36,93 @@ docker build -t time-server-api .
 docker run --rm -p 8000:8000 time-server-api
 ```
 
-Проверка: `http://127.0.0.1:8000/` и `http://127.0.0.1:8000/docs`
-
 ## Эндпоинты
 
-| Метод | Путь        | Описание                          |
-|-------|-------------|-----------------------------------|
-| GET   | `/`         | Приветственное сообщение        |
-| GET   | `/time`     | Текущее время UTC (ISO 8601)    |
-| GET   | `/date`     | Текущая дата UTC                |
-| GET   | `/datetime` | Дата и время UTC                |
-| GET   | `/convert`  | UTC → локальное время по IANA-зоне (`tz`), опционально `utc_iso` |
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/` | Приветствие |
+| GET | `/time` | Текущее время UTC (ISO 8601) |
+| GET | `/date` | Текущая дата UTC |
+| GET | `/datetime` | Дата и время UTC |
+| GET | `/convert` | UTC → время в выбранной зоне (см. ниже) |
+
+### `/convert`
+
+Параметры запроса:
+
+| Параметр | Обязательный | Описание |
+|----------|----------------|----------|
+| `tz` | да | IANA-имя зоны: `Europe/Moscow`, `Asia/Yekaterinburg`, `UTC`, … |
+| `utc_iso` | нет | Момент в UTC (ISO 8601); если не указан — текущее время сервера в UTC |
+
+Ответ: `timezone`, `utc_iso`, `local_iso`, `utc_offset` (например `+03:00`). Неверная зона — **400**.
+
+Примеры после деплоя (подставьте IP вашего VPS):
+
+```http
+GET http://<VPS_IP>:8000/convert?tz=Europe/Moscow
+GET http://<VPS_IP>:8000/convert?tz=Asia/Yekaterinburg&utc_iso=2026-05-13T12:00:00Z
+```
 
 ## GitHub Actions
 
-Файл: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+Файл: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 
-**Триггеры:** push в ветку **`main`** или ручной запуск (**Actions → Run workflow**, ветка **main**).
+**Триггеры:** push в **`main`**, ручной запуск (**Actions → Build and Deploy → Run workflow**, ветка **main**).
 
-**Job `build`**
+| Job | Действие |
+|-----|----------|
+| **build** | Checkout → Docker Buildx → вход в GHCR → сборка и push образа с тегом **`latest`** |
+| **deploy** | После успешного **build**: SSH на VPS → `docker login` ghcr.io → `pull` → перезапуск контейнера **`vpe04-time-api`** (`-p 8000:8000`) |
 
-1. Checkout репозитория  
-2. Docker Buildx  
-3. Вход в **GHCR** (`ghcr.io`) под `GITHUB_TOKEN`  
-4. Сборка и **push** образа с тегом **`latest`**
+Образ в реестре: `ghcr.io/<владелец>/<репозиторий>:latest` (имя приводится к нижнему регистру).
 
-После успешного прогона образ доступен в пакетах репозитория на GitHub (**Packages**), имя вида `ghcr.io/<владелец>/<репозиторий>:latest` (реестр приводит имя к нижнему регистру).
+### Секреты для деплоя (Settings → Secrets and variables → Actions)
 
-### Автодеплой на VPS по SSH
-
-При каждом **push в `main`** (и при ручном **Run workflow** для ветки **main**) после успешной сборки образа запускается job **deploy**: подключение по SSH, `docker pull` из **GHCR** и запуск контейнера.
-
-**Что нужно один раз:**
-
-1. На VPS установлен **Docker**, пользователь из секрета `USERNAME` может выполнять `docker` (**root** или пользователь в группе `docker`: `sudo usermod -aG docker ИМЯ && newgrp docker`).
-2. Открыты порты **22** (SSH) и **8000** (приложение) — локально `ufw`, у хостера — security group / firewall.
-3. В репозитории GitHub: **Settings → Secrets and variables → Actions → Secrets** (имена должны совпадать с workflow):
+Без них job **deploy** падает; **build** и образ в GHCR всё равно выполняются.
 
 | Секрет | Содержимое |
 |--------|------------|
 | `HOST` | IP или домен VPS |
-| `USERNAME` | пользователь SSH (`root` или другой) |
-| `SSH_KEY` | **полный** приватный ключ (включая строки `BEGIN` / `END`) |
-| `PORT` | опционально; если не задан — используется **22** |
+| `USERNAME` | пользователь SSH (`root` или другой с правом `docker`) |
+| `SSH_KEY` | полный **приватный** ключ (`BEGIN` … `END`) |
+| `PORT` | опционально; если нет — используется **22** |
 
-Без этих секретов job **deploy** завершится ошибкой; job **build** и публикация образа в GHCR всё равно выполняются.
+На VPS: установлен **Docker**, открыты **22** (SSH) и **8000** (HTTP приложения); вход по SSH для Actions — **только по ключу** (публичный ключ в `~/.ssh/authorized_keys`). Не root: пользователь в группе `docker` (`sudo usermod -aG docker <user>`).
 
-На сервере контейнер называется **`vpe04-time-api`**, слушает **8000** на хосте (`-p 8000:8000`). Проверка: `http://<IP>:8000/docs`
+Краткая установка Docker на Ubuntu: [Docker Engine (Ubuntu)](https://docs.docker.com/engine/install/ubuntu/). Файрвол: `ufw allow 22,8000/tcp` и правила у хостера (security group).
 
-Повторный деплой без нового коммита: **Actions → Build and Deploy → Run workflow** (ветка **main**).
+### Проверка после деплоя
 
-### Проверка деплоя на реальном VPS
+1. **Actions** — workflow **Build and Deploy** зелёный, в **deploy** есть успешные `docker pull` / `docker run`.
+2. Браузер: `http://<VPS_IP>:8000/docs` — открывается Swagger (**Time Server API**).
+3. Опционально: `http://<VPS_IP>:8000/convert?tz=Europe/Moscow` — JSON с полями `utc_iso`, `local_iso`.
 
-Сделайте по порядку.
+Повторный прогон без коммита: **Run workflow** на ветке **main**.
 
-**1. Сервер (Ubuntu)** — по SSH зайдите под тем пользователем, что укажете в `USERNAME` (часто `root`).
-
-```bash
-# Docker установлен?
-docker --version
-```
-
-Если команды нет, для Ubuntu 24 см. [официальную установку Docker Engine](https://docs.docker.com/engine/install/ubuntu/) или кратко:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME:-stable}") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-```
-
-**2. Доступ по SSH-ключу** — в секрет `SSH_KEY` кладётся **приватный** ключ (целиком, с `BEGIN` / `END`). На сервере в `~/.ssh/authorized_keys` у этого пользователя должна быть строка из **публичного** ключа (`*.pub`), соответствующего этому приватному. Пароль без ключа для `appleboy/ssh-action` не подойдёт.
-
-Проверка с вашего ПК (подставьте ключ и адрес):
-
-```bash
-ssh -i C:\Users\Eduard\.ssh\id_rsa_work -p 22 USER@IP "docker --version"
-```
-
-**3. Файрвол** — снаружи должен быть доступен порт **8000** (и **22** для GitHub).
-
-```bash
-sudo ufw status
-sudo ufw allow 22/tcp
-sudo ufw allow 8000/tcp
-sudo ufw enable   # если ещё не включён
-```
-
-У хостера в панели иногда отдельно открывают «Security Group» / входящие правила — добавьте **TCP 8000** откуда угодно или с вашего IP.
-
-**4. GitHub** — в вашем репозитории: **Settings → Secrets and variables → Actions**:
-
-| Имя | Значение |
-|-----|----------|
-| `HOST` | IP или домен VPS |
-| `USERNAME` | пользователь SSH (`root` или другой) |
-| `SSH_KEY` | приватный ключ (одна многострочная секретная запись) |
-| `PORT` | опционально, если SSH не на 22 |
-
-**5. Запуск** — сделайте **push в `main`** или **Actions → Build and Deploy → Run workflow** (ветка **main**).
-
-**6. Проверка результата** — в логе job **deploy** должны быть `docker pull` и `docker run` без ошибок. В браузере: `http://<IP>:8000/` и `http://<IP>:8000/docs`.
-
-**Типичные ошибки**
+### Типичные ошибки
 
 | Симптом | Что проверить |
 |---------|----------------|
-| `missing server host` / SSH не коннектится | `HOST`, `PORT`, ключ в Secrets, `authorized_keys` на сервере |
-| `docker: command not found` | Установить Docker на VPS |
-| Ошибка при `docker pull` / `denied` | Образ в GHCR после успешного **build**; логин в скрипте использует `GITHUB_TOKEN` от того же workflow |
-| Сайт не открывается по `:8000` | `ufw`/панель хостера, контейнер `docker ps` на сервере |
-| `permission denied` при `docker` не под root | Добавить пользователя в группу `docker` или использовать `USERNAME=root` |
+| SSH / `missing server host` | `HOST`, `PORT`, `SSH_KEY`, ключ в `authorized_keys` на сервере |
+| `docker: command not found` на VPS | Установить Docker |
+| Ошибка `docker pull` / `denied` | Успешный **build**; образ в GHCR; токен в workflow для `docker login` |
+| Не открывается `:8000` | `ufw`, firewall хостера; `docker ps` на сервере — контейнер `vpe04-time-api` |
+| `permission denied` для docker | Пользователь в группе `docker` или деплой под `root` |
 
 ## Структура репозитория
 
 ```
 Lesson_VPe04/
-├── main.py                 # FastAPI-приложение
-├── requirements.txt      # Зависимости Python
-├── Dockerfile              # Сборка образа приложения
+├── main.py
+├── requirements.txt
+├── Dockerfile
 ├── .dockerignore
-├── .github/
-│   └── workflows/
-│       └── deploy.yml      # CI: build + push в GHCR; опционально SSH deploy
+├── .gitignore
+├── .github/workflows/deploy.yml   # build → GHCR → SSH deploy
 └── README.md
 ```
 
 ## Связь с уроком
 
-Материал опирается на темы **CI/CD**, **GitHub Actions**, **Docker**, **GHCR**, **Secrets** и (по желанию) деплой по SSH — как в кейсе **VPe04** курса «Профессия — вайб-кодер».
+Кейс **VPe04** курса «Профессия — вайб-кодер»: **CI/CD**, **GitHub Actions**, **Docker**, **GHCR**, **Secrets**, деплой по **SSH**, модель веток (**GitFlow** / работа с **`main`**).

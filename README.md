@@ -43,6 +43,7 @@ docker run --rm -p 8000:8000 time-server-api
 | GET   | `/time`     | Текущее время UTC (ISO 8601)    |
 | GET   | `/date`     | Текущая дата UTC                |
 | GET   | `/datetime` | Дата и время UTC                |
+| GET   | `/convert`  | UTC → локальное время по IANA-зоне (`tz`), опционально `utc_iso` |
 
 ## GitHub Actions
 
